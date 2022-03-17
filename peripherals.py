@@ -1,5 +1,6 @@
 import ssd1306
 from machine import Pin, I2C, Timer
+import urequests
 import gfx
 import settings
 import dht12
@@ -7,6 +8,7 @@ import time
 import json
 import neopixel
 from servo import Servo
+from wificonnect import api_key
 
 ##############################################
 #Obj initialization
@@ -29,14 +31,65 @@ button_neg = Pin(settings.BUT_SUB_PIN, Pin.IN, Pin.PULL_UP)
 
 ##############################################
 
+
 def measurement_onetime():
     global room_temp, room_humi
-    print("pomiar initial")
+    if settings.DEBUG:
+        print("measurement_onetime()")
     sensor.measure()
     room_temp = sensor.temperature()
     room_humi = sensor.humidity()
+    return room_temp, room_humi
     
 measurement_onetime()
+
+def temp_request():
+    global room_temp, room_humi
+    URL = "https://esp32-smart-thermostat.herokuapp.com/hello"
+    params = {
+        "api_key":api_key,
+        "room_temp":room_temp,
+        "room_humi":room_humi,
+        }
+    if settings.DEBUG:
+        print("temp_request params =",params)
+    res = urequests.request("POST", URL, json = params)
+    print(res.text)
+    backup["target_temp"] = int(res.json()["target_temp"])
+    tim2.init(
+        period=settings.SERVO_SET_DELAY,
+        mode=Timer.ONE_SHOT,
+        callback=set_servo
+        )
+    
+def master_request(user_temp):
+    global room_temp, room_humi
+    URL = "https://esp32-smart-thermostat.herokuapp.com/hello2"
+    params = {"user_temp":usert_temp,}
+    res = urequests.request("POST", URL, json = params)
+    print(res.text)
+
+def measurement(tim1):
+    global backup, room_temp, room_humi, relay
+    if settings.DEBUG:
+        print("measurement()")
+    try:
+        sensor.measure()
+    except OSError:
+        pass
+    except:
+        pass
+    room_temp = sensor.temperature()
+    room_humi = sensor.humidity()
+    relay_check()
+    
+
+tim1.init(
+    period=settings.SENSOR_DELAY,
+    mode=Timer.PERIODIC,
+    callback=measurement
+    )
+
 
 def backup_load():
     global backup
@@ -50,7 +103,12 @@ def backup_save():
         
 def relay_check():
     global room_temp
-    print("relay check temp =",room_temp, "target_temp =", backup["target_temp"]) 
+    if settings.DEBUG:
+        print(
+            "relay check() temp =",
+            room_temp, "target_temp =",
+            backup["target_temp"]
+            ) 
     if room_temp+settings.HYSTERESIS<backup["target_temp"]:
         relay.on()
     elif room_temp>backup["target_temp"]+settings.HYSTERESIS/2:
@@ -59,7 +117,13 @@ def relay_check():
 def  fluent_servo(target_angle):
     global backup
     current_angle = int(backup["servo_angle"])
-    print("target angle = ",target_angle, "current angle = ",current_angle)
+    if settings.DEBUG:
+        print(
+            "target angle = ",
+            target_angle,
+            "current angle = ",
+            current_angle
+            )
     if target_angle==current_angle:
         return
     if target_angle<current_angle:
@@ -93,15 +157,24 @@ def debounce(pin):
 
 def user_override_pos(pin):
     global backup, room_temp, room_humi
-    tim0.init(period=settings.SCR_OFF_TIME, mode=Timer.ONE_SHOT, callback=screen.oled_off)
-    tim2.init(period=settings.SERVO_SET_DELAY, mode=Timer.ONE_SHOT, callback=set_servo)
+    tim0.init(
+        period=settings.SCR_OFF_TIME,
+        mode=Timer.ONE_SHOT,
+        callback=screen.oled_off
+        )
+    tim2.init(
+        period=settings.SERVO_SET_DELAY,
+        mode=Timer.ONE_SHOT,
+        callback=set_servo
+        )
     tim1.deinit()
     d = debounce(pin)
     if d == None:
         return
     elif not d:
         if Screen.screen_on==False:
-            print("screen on")
+            if settings.DEBUG:
+                print("screen on")
             screen.main_gui(backup, room_temp, room_humi)
             Screen.screen_on=True
         else:
@@ -112,21 +185,33 @@ def user_override_pos(pin):
             user_temp = backup["target_temp"]
             relay_check()
             time.sleep_ms(100)
-    #tim1.init(period=5000, mode=Timer.PERIODIC, callback=measurement)
-    #response = urequests.get(f"https://esp32-smart-thermostat.herokuapp.com/helloget?api=123456789&temp={room_temp}&humi={room_humi}&user_temp={user_temp}")
-    #response = urequests.post(f"https://esp32-smart-thermostat.herokuapp.com/helloget?api=123456789&temp={room_temp}&humi={room_humi}&user_temp={user_temp}")
+            #master_request(user_temp)
+    tim1.init(
+        period=settings.SENSOR_DELAY,
+        mode=Timer.PERIODIC,
+        callback=measurement
+        )
 
 def user_override_neg(pin):
     global backup, room_temp, room_humi, relay
-    tim0.init(period=settings.SCR_OFF_TIME, mode=Timer.ONE_SHOT, callback=screen.oled_off)
-    tim2.init(period=settings.SERVO_SET_DELAY, mode=Timer.ONE_SHOT, callback=set_servo)
+    tim0.init(
+        period=settings.SCR_OFF_TIME,
+        mode=Timer.ONE_SHOT,
+        callback=screen.oled_off
+        )
+    tim2.init(
+        period=settings.SERVO_SET_DELAY,
+        mode=Timer.ONE_SHOT,
+        callback=set_servo
+        )
     tim1.deinit()
     d = debounce(pin)
     if d == None:
         return
     elif not d:
         if Screen.screen_on==False:
-            print("screen on")
+            if settings.DEBUG:
+                print("screen on")
             screen.main_gui(backup, room_temp, room_humi)
             Screen.screen_on=True
         else:
@@ -137,10 +222,14 @@ def user_override_neg(pin):
             user_temp = backup["target_temp"]
             relay_check()
             time.sleep_ms(100)
-    #tim1.init(period=5000, mode=Timer.PERIODIC, callback=measurement)
-    #response = urequests.get(f"https://esp32-smart-thermostat.herokuapp.com/helloget?api=123456789&temp={room_temp}&humi={room_humi}&user_temp={user_temp}")
+            #master_request(user_temp)
+    tim1.init(
+        period=settings.SENSOR_DELAY,
+        mode=Timer.PERIODIC,
+        callback=measurement
+        )
 
-
+    
 class Screen():
     TEMP = [
     [0,0,1,1,0,0,1,0,1,1,1,1],
@@ -179,7 +268,8 @@ class Screen():
         
     def oled_off(self, tim0):
         oled.fill(0)
-        print("screen_off")
+        if settings.DEBUG:
+            print("screen_off")
         Screen.screen_on=False
         oled.show()
         

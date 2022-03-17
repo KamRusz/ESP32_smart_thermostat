@@ -3,5 +3,5 @@ import wificonnect
 wificonnect.do_connect()
 #import esp
 #esp.osdebug(None)
-#import webrepl
+import webrepl
 #webrepl.start()

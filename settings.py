@@ -14,7 +14,7 @@ TEMP_ALIGN = {
     "26":0,
     }                    # Map of "temperature scale":"servo angles" on existing thermostat
 
-SCR_OFF_TIME = 3000      #in ms timer0 - delay to turn screen off
+SCR_OFF_TIME = 10000      #in ms timer0 - delay to turn screen off
 SENSOR_DELAY = 10000     #in ms timer1 - delay between measurements (T/H)
 SERVO_SET_DELAY = 1000   #in ms timer2 - delay before servo engage 
 HYSTERESIS = 1  #in C degrees default 1 C degree - for preserving relays life
@@ -27,3 +27,10 @@ SDA_PIN = 21
 SERVO_PIN = 16
 RELAY_PIN = 17
 NEO_PIN = 15
+BUT_ADD_PIN = 19
+BUT_SUB_PIN = 18
+
+
+
+#DEBUG
+DEBUG=True
