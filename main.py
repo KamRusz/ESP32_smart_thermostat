@@ -1,14 +1,11 @@
-from machine import Pin
 import micropython
-from peripherals import (
-    backup_load,
-    user_override_pos,
-    user_override_neg,
-    button_pos,
-    button_neg,
-    )
+from machine import Pin
 
-micropython.alloc_emergency_exception_buf(100)
+import settings
+from peripherals import (backup_load, button_neg, button_pos,
+                         user_override_neg, user_override_pos)
+
+micropython.alloc_emergency_exception_buf(settings.EM_BUFF)
 
 backup = backup_load()
 

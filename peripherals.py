@@ -1,12 +1,14 @@
-import ssd1306
-from machine import Pin, I2C, Timer
+import json
+import time
+
+import neopixel
 import urequests
+from machine import I2C, Pin, Timer
+
+import dht12
 import gfx
 import settings
-import dht12
-import time
-import json
-import neopixel
+import ssd1306
 from servo import Servo
 from wificonnect import api_key
 
@@ -44,13 +46,9 @@ def measurement_onetime():
 measurement_onetime()
 
 def temp_request():
-    global room_temp, room_humi
-    URL = "https://esp32-smart-thermostat.herokuapp.com/hello"
-    params = {
-        "api_key":api_key,
-        "room_temp":room_temp,
-        "room_humi":room_humi,
-        }
+    global api_key, room_temp, room_humi
+    URL = settings.TEMP_REQ_URL
+    params = {"api_key":api_key, "room_temp":room_temp,"room_humi":room_humi}
     if settings.DEBUG:
         print("temp_request params =",params)
     res = urequests.request("POST", URL, json = params)
@@ -62,10 +60,10 @@ def temp_request():
         callback=set_servo
         )
     
-def master_request(user_temp):
-    global room_temp, room_humi
-    URL = "https://esp32-smart-thermostat.herokuapp.com/hello2"
-    params = {"user_temp":usert_temp,}
+def master_request(tim3):
+    global backup
+    URL = settings.USER_TEMP_URL
+    params = {"api_key":api_key, "user_temp":backup["target_temp"]}
     res = urequests.request("POST", URL, json = params)
     print(res.text)
 
@@ -81,6 +79,7 @@ def measurement(tim1):
         pass
     room_temp = sensor.temperature()
     room_humi = sensor.humidity()
+    temp_request()
     relay_check()
     
 
@@ -93,12 +92,12 @@ tim1.init(
 
 def backup_load():
     global backup
-    with open("backup.json", "r") as f:
+    with open(settings.BACKUP_PATH, "r") as f:
         backup = json.load(f)   
     return backup
 
 def backup_save():
-    with open("backup.json", "w") as f:
+    with open(settings.BACKUP_PATH, "w") as f:
         json.dump(backup, f)
         
 def relay_check():
@@ -118,12 +117,7 @@ def  fluent_servo(target_angle):
     global backup
     current_angle = int(backup["servo_angle"])
     if settings.DEBUG:
-        print(
-            "target angle = ",
-            target_angle,
-            "current angle = ",
-            current_angle
-            )
+        print("target angle = ",target_angle, "current angle = ",current_angle)
     if target_angle==current_angle:
         return
     if target_angle<current_angle:
@@ -143,12 +137,17 @@ def  fluent_servo(target_angle):
     
 def set_servo(tim2):
     global backup
-    angle = settings.TEMP_ALIGN[str(backup["target_temp"])]
+    angle = settings.TEMP_ALIGN[backup["target_temp"]]
+    fluent_servo(angle)
+    
+def set_servo_local():
+    global backup
+    angle = settings.TEMP_ALIGN[backup["target_temp"]]
     fluent_servo(angle)
     
 def debounce(pin):
     prev = None
-    for _ in range(32):
+    for _ in range(settings.DB_CYCLE):
         current_value = pin.value()
         if prev != None and prev != current_value:
             return None
@@ -162,14 +161,8 @@ def user_override_pos(pin):
         mode=Timer.ONE_SHOT,
         callback=screen.oled_off
         )
-    tim2.init(
-        period=settings.SERVO_SET_DELAY,
-        mode=Timer.ONE_SHOT,
-        callback=set_servo
-        )
-    tim1.deinit()
     d = debounce(pin)
-    if d == None:
+    if d is None:
         return
     elif not d:
         if Screen.screen_on==False:
@@ -178,6 +171,17 @@ def user_override_pos(pin):
             screen.main_gui(backup, room_temp, room_humi)
             Screen.screen_on=True
         else:
+            tim2.init(
+                period=settings.SERVO_SET_DELAY,
+                mode=Timer.ONE_SHOT,
+                callback=set_servo
+                    )
+            tim3.init(
+                period=settings.SEND_REQ_DEL,
+                mode=Timer.ONE_SHOT,
+                callback=master_request
+                    )
+            tim1.deinit()
             if backup["target_temp"]<=25:
                 backup["target_temp"]+=1
             #print(backup["target_temp"])
@@ -185,12 +189,8 @@ def user_override_pos(pin):
             user_temp = backup["target_temp"]
             relay_check()
             time.sleep_ms(100)
-            #master_request(user_temp)
-    tim1.init(
-        period=settings.SENSOR_DELAY,
-        mode=Timer.PERIODIC,
-        callback=measurement
-        )
+            #master_request()
+    tim1.init(period=settings.SENSOR_DELAY, mode=Timer.PERIODIC, callback=measurement)
 
 def user_override_neg(pin):
     global backup, room_temp, room_humi, relay
@@ -199,12 +199,6 @@ def user_override_neg(pin):
         mode=Timer.ONE_SHOT,
         callback=screen.oled_off
         )
-    tim2.init(
-        period=settings.SERVO_SET_DELAY,
-        mode=Timer.ONE_SHOT,
-        callback=set_servo
-        )
-    tim1.deinit()
     d = debounce(pin)
     if d == None:
         return
@@ -215,6 +209,17 @@ def user_override_neg(pin):
             screen.main_gui(backup, room_temp, room_humi)
             Screen.screen_on=True
         else:
+            tim1.deinit()
+            tim2.init(
+                period=settings.SERVO_SET_DELAY,
+                mode=Timer.ONE_SHOT,
+                callback=set_servo
+                )
+            tim3.init(
+                period=settings.SEND_REQ_DEL,
+                mode=Timer.ONE_SHOT,
+                callback=master_request
+                )
             if backup["target_temp"]>=15:
                 backup["target_temp"]-=1
             #print(backup["target_temp"])
@@ -222,12 +227,8 @@ def user_override_neg(pin):
             user_temp = backup["target_temp"]
             relay_check()
             time.sleep_ms(100)
-            #master_request(user_temp)
-    tim1.init(
-        period=settings.SENSOR_DELAY,
-        mode=Timer.PERIODIC,
-        callback=measurement
-        )
+            #master_request()
+    tim1.init(period=settings.SENSOR_DELAY, mode=Timer.PERIODIC, callback=measurement)
 
     
 class Screen():
@@ -295,7 +296,7 @@ class Screen():
         elif backup["target_temp"] == 26:
             oled.text("max", 102, 5)
         else:
-            oled.text(f"{backup["target_temp"]}", 102, 5)
+            oled.text(f"{backup['target_temp']}", 102, 5)
         oled.text(f"temp", 6, 28)
         oled.text(f"{t} C", 71, 28)
         oled.text(f"wilg", 6, 48)
